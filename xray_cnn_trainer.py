@@ -213,12 +213,12 @@ if model_file is not None:
                 st.session_state.label_map = label_map_dict
             else:
                 st.warning("Label map JSON must be an object/dict. Using default class indices.")
-                st.session_state.label_map = {i: str(i) for i in range(num_classes)}
+                st.session_state.label_map = {}
         except Exception:
             st.warning("Could not read label map JSON. Using default class indices.")
-            st.session_state.label_map = {i: str(i) for i in range(num_classes)}
+            st.session_state.label_map = {}
     elif not st.session_state.label_map:
-        st.session_state.label_map = {i: str(i) for i in range(num_classes)}
+        st.session_state.label_map = {}
     st.success(f"Model loaded with {num_classes} classes! Now upload images to predict.")
 
 # --- Upload images for prediction ---
@@ -232,7 +232,16 @@ else:
 if st.session_state.model_loaded and st.session_state.predict_files:
     if st.button("Predict"):
         model = st.session_state.model
-        reverse_map = {v:k for k,v in st.session_state.label_map.items()} if st.session_state.label_map else {i:str(i) for i in range(model.classifier[2].out_features)}
+        # Handle either name->idx or idx->name maps; fall back to index labels.
+        if st.session_state.label_map:
+            keys = list(st.session_state.label_map.keys())
+            values = list(st.session_state.label_map.values())
+            if all(isinstance(k, int) for k in keys) and all(isinstance(v, str) for v in values):
+                reverse_map = st.session_state.label_map
+            else:
+                reverse_map = {v: k for k, v in st.session_state.label_map.items()}
+        else:
+            reverse_map = {i: str(i) for i in range(model.classifier[2].out_features)}
         progress = st.progress(0)
         total = len(st.session_state.predict_files)
         for i, f in enumerate(st.session_state.predict_files):
