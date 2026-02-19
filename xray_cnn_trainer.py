@@ -187,9 +187,17 @@ if st.session_state.train_started and not st.session_state.training_done and fol
 # --- Download trained model ---
 if st.session_state.training_done and st.session_state.model_trained:
     buffer = io.BytesIO()
-    torch.save(st.session_state.model_trained.state_dict(), buffer)
+    payload = {
+        "model_state_dict": st.session_state.model_trained.state_dict(),
+        "label_map": st.session_state.label_map,
+    }
+    torch.save(payload, buffer)
     buffer.seek(0)
     st.download_button("Download Trained Model", data=buffer, file_name="xray_cnn.pth")
+
+    if st.session_state.label_map:
+        labels_json = json.dumps(st.session_state.label_map, indent=2, sort_keys=True)
+        st.download_button("Download Label Map (JSON)", data=labels_json, file_name="labels.json")
 
 # --- Upload trained model for prediction ---
 st.header("Upload Trained Model for Prediction")
@@ -198,10 +206,16 @@ label_map_file = st.file_uploader("Optional: upload label map JSON (e.g. {\"Covi
 
 if model_file is not None:
     buffer = io.BytesIO(model_file.read())
-    checkpoint = torch.load(buffer)
-    num_classes = checkpoint['classifier.2.weight'].shape[0]
+    checkpoint = torch.load(buffer, map_location="cpu")
+    if isinstance(checkpoint, dict) and "model_state_dict" in checkpoint:
+        state_dict = checkpoint["model_state_dict"]
+        checkpoint_label_map = checkpoint.get("label_map", {})
+    else:
+        state_dict = checkpoint
+        checkpoint_label_map = {}
+    num_classes = state_dict['classifier.2.weight'].shape[0]
     model = SimpleCNN(num_classes=num_classes)
-    model.load_state_dict(checkpoint)
+    model.load_state_dict(state_dict)
     model.eval()
     st.session_state.model_loaded = True
     st.session_state.model = model
@@ -217,6 +231,8 @@ if model_file is not None:
         except Exception:
             st.warning("Could not read label map JSON. Using default class indices.")
             st.session_state.label_map = {}
+    elif checkpoint_label_map and not st.session_state.label_map:
+        st.session_state.label_map = checkpoint_label_map
     elif not st.session_state.label_map:
         st.session_state.label_map = {}
     st.success(f"Model loaded with {num_classes} classes! Now upload images to predict.")
@@ -249,7 +265,7 @@ if st.session_state.model_loaded and st.session_state.predict_files:
             img_tensor = val_transform(img).unsqueeze(0)
             output = model(img_tensor)
             pred_class_idx = output.argmax(dim=1).item()
-            pred_class = reverse_map[pred_class_idx]
+            pred_class = reverse_map.get(pred_class_idx, str(pred_class_idx))
             st.write(f"{f.name} → {pred_class}")
             progress.progress((i+1)/total)
 
