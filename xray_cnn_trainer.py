@@ -16,6 +16,7 @@ from PIL import Image
 import os
 import io
 import zipfile
+import json
 
 # --- Streamlit setup ---
 st.title("🩻 X-Ray CNN Trainer and Predictor with Folder Uploads")
@@ -59,9 +60,20 @@ val_transform = transforms.Compose([
 ])
 
 # --- Session state initialization ---
-for key in ['train_started','training_done','predict_files','model_loaded','model','label_map','model_trained']:
-    if key not in st.session_state:
-        st.session_state[key] = False if key in ['train_started','training_done','model_loaded'] else None
+if 'train_started' not in st.session_state:
+    st.session_state.train_started = False
+if 'training_done' not in st.session_state:
+    st.session_state.training_done = False
+if 'predict_files' not in st.session_state:
+    st.session_state.predict_files = []
+if 'model_loaded' not in st.session_state:
+    st.session_state.model_loaded = False
+if 'model' not in st.session_state:
+    st.session_state.model = None
+if 'label_map' not in st.session_state:
+    st.session_state.label_map = {}
+if 'model_trained' not in st.session_state:
+    st.session_state.model_trained = None
 
 # --- Dataset class ---
 class FolderDataset(Dataset):
@@ -182,6 +194,7 @@ if st.session_state.training_done and st.session_state.model_trained:
 # --- Upload trained model for prediction ---
 st.header("Upload Trained Model for Prediction")
 model_file = st.file_uploader("Upload your trained xray_cnn.pth file", type=["pth"], key="predict_model_upload")
+label_map_file = st.file_uploader("Optional: upload label map JSON (e.g. {\"Covid\":0,\"Normal\":1})", type=["json"], key="label_map_upload")
 
 if model_file is not None:
     buffer = io.BytesIO(model_file.read())
@@ -192,6 +205,20 @@ if model_file is not None:
     model.eval()
     st.session_state.model_loaded = True
     st.session_state.model = model
+    # Load label map if provided; otherwise keep a sane default for cloud runs
+    if label_map_file is not None:
+        try:
+            label_map_dict = json.load(label_map_file)
+            if isinstance(label_map_dict, dict):
+                st.session_state.label_map = label_map_dict
+            else:
+                st.warning("Label map JSON must be an object/dict. Using default class indices.")
+                st.session_state.label_map = {i: str(i) for i in range(num_classes)}
+        except Exception:
+            st.warning("Could not read label map JSON. Using default class indices.")
+            st.session_state.label_map = {i: str(i) for i in range(num_classes)}
+    elif not st.session_state.label_map:
+        st.session_state.label_map = {i: str(i) for i in range(num_classes)}
     st.success(f"Model loaded with {num_classes} classes! Now upload images to predict.")
 
 # --- Upload images for prediction ---
@@ -205,7 +232,7 @@ else:
 if st.session_state.model_loaded and st.session_state.predict_files:
     if st.button("Predict"):
         model = st.session_state.model
-        reverse_map = {v:k for k,v in st.session_state.label_map.items()} if 'label_map' in st.session_state else {i:str(i) for i in range(model.classifier[2].out_features)}
+        reverse_map = {v:k for k,v in st.session_state.label_map.items()} if st.session_state.label_map else {i:str(i) for i in range(model.classifier[2].out_features)}
         progress = st.progress(0)
         total = len(st.session_state.predict_files)
         for i, f in enumerate(st.session_state.predict_files):
